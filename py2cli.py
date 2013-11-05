@@ -1,5 +1,6 @@
 import sys
 import re
+from os import path
 from inspect import signature, Signature, _empty
 
 class Args(object):
@@ -7,12 +8,12 @@ class Args(object):
     Class for storing arguments provided by the user and interactively calling
     functions with them.
     """
-    def __init__(self, argv):
+    def from_argv(argv):
         """
         Creates a new Args instance from a list of command line arguments.
         """
-        self.args = []
-        self.kwargs = {}
+        args = []
+        kwargs = {}
 
         arguments = argv[1:]
         while len(arguments):
@@ -22,10 +23,15 @@ class Args(object):
                     key, value = re.match('--?(\w+)=(.+)', arg).groups()
                 else:
                     key, value = arg.replace('-', ''), arguments.pop(0)
-                self.kwargs[key] = value
+                kwargs[key] = value
             else:
-                self.args.append(arg)
+                args.append(arg)
 
+        return Args(args, kwargs)
+        
+    def __init__(self, args, kwargs):
+        self.args = args
+        self.kwargs = kwargs
         self.official_args = {}
 
     def request(self, name, description='', default=_empty):
@@ -83,14 +89,35 @@ class Args(object):
         Apply the arguments that have been ensured to exist to a given
         function.
         """
-        return function(**self.official_args)
+        parameters = signature(function).parameters
+        for param_name, param in parameters.items():
+            if '*' in param_name:
+                continue
+
+            if param.annotation is not Signature.empty:
+                annotation = param.annotation
+            else:
+                annotation = ''
+            self.ensure_exists(param_name, annotation, param.default)
+
+        print('')
+        result = function(**self.official_args)
+        if result is not None:
+            print(result)
+
+
+def run(function=None, *args, **kwargs):
+    instance = Args(args, kwargs)
+    if function is None:
+        function_name = args.request('function', 'function to be called')
+        function = globals()[function_name]
+    instance.apply(function)
+
 
 if __name__ == '__main__':
-    from os import path
+    args = Args.from_argv(sys.argv)
 
-    args = Args(sys.argv)
-
-    script = args.request('file', 'Python file to be executed')
+    script = args.request('module', 'Python file to be executed')
     if not '.py' in script:
         script += '.py'
     assert path.exists(script), 'Script file {} does not exist'.format(script)
@@ -102,19 +129,5 @@ if __name__ == '__main__':
     module = __import__(script_name)
     function = getattr(module, function_name)
 
-    parameters = signature(function).parameters
-    for param_name, param in parameters.items():
-        if '*' in param_name:
-            continue
+    args.apply(function)
 
-        if param.annotation is not Signature.empty:
-            annotation = param.annotation
-        else:
-            annotation = ''
-        args.ensure_exists(param_name, annotation, param.default)
-
-    print('')
-
-    result = args.apply(function)
-    if result is not None:
-        print(result)
